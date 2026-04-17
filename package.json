@@ -1,0 +1,10 @@
+{
+  "name": "ai-candidate-screening-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m http.server 3000 -d .",
+    "build": "node scripts/build.mjs",
+    "start": "python3 -m http.server 3000 -d dist"
+  }
+}
