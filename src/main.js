@@ -1,5 +1,5 @@
 import { SAMPLE_DATASETS } from "./data/sampleData.js";
-import { analyze, extractRequirements } from "./engine/analyzer.js";
+import { REJECT_REASON_EXAMPLES, analyze, extractRequirements } from "./engine/analyzer.js";
 
 const state = {
   started: false,
@@ -9,15 +9,15 @@ const state = {
   result: null,
   selected: null,
   analyzing: false,
-  workspaceTab: "all",
+  workspaceTab: "strong",
   manualResume: { name: "", text: "" },
   filters: {
-    decisionOnly: false,
     minYears: 0,
     locationOnly: false,
-    mustHave: false,
-    noReject: false,
-    sort: "score"
+    missingMustHave: false,
+    weakEvidence: false,
+    noHardDisqualifiers: false,
+    sort: "bucket"
   }
 };
 
@@ -28,69 +28,74 @@ function render() {
 
   app.innerHTML = `
     <div class="container">
-      <div class="topbar card">
+      <header class="topbar">
         <div>
-          <strong>AI Candidate Screening Assistant</strong>
-          <div class="small">Transparent recruiter copilot for faster, explainable screening.</div>
+          <strong>First Pass Screening Assistant</strong>
+          <div class="small">Evidence-based screening summaries for large applicant pools.</div>
         </div>
         <div class="pill-row">
-          ${SAMPLE_DATASETS.map((d) => `<button class="btn" data-load="${d.id}">${d.name}</button>`).join("")}
+          ${SAMPLE_DATASETS.map((dataset) => `<button class="btn" data-load="${dataset.id}">${dataset.name}</button>`).join("")}
         </div>
-      </div>
+      </header>
 
       <div class="grid layout">
-        <aside class="grid">
+        <aside class="grid sidebar">
           <section class="card">
-            <h3>Job description</h3>
+            <h3>Applicant intake</h3>
+            <label>Job description</label>
             <textarea id="jobInput" placeholder="Paste job description here...">${escapeHtml(state.jobDescription)}</textarea>
-            <div class="small" style="margin-top:8px">Upload resumes (.txt), or paste one manually</div>
+            <div class="small">Upload text resumes, drag files in, or paste one candidate manually.</div>
             <input type="file" id="resumeInput" accept=".txt,.md,.text" multiple />
             <div id="dropZone" class="dropzone">Drag and drop resumes here</div>
 
-            <div class="grid two" style="margin-top:8px">
-              <input id="manualResumeName" placeholder="Manual resume candidate name" value="${escapeHtml(state.manualResume.name)}" />
-              <button id="addManualResume" class="btn">Add pasted resume</button>
+            <div class="grid two">
+              <input id="manualResumeName" placeholder="Candidate name" value="${escapeHtml(state.manualResume.name)}" />
+              <button id="addManualResume" class="btn">Add resume</button>
             </div>
-            <textarea id="manualResumeText" placeholder="Paste resume text for a candidate">${escapeHtml(state.manualResume.text)}</textarea>
+            <textarea id="manualResumeText" placeholder="Paste resume text">${escapeHtml(state.manualResume.text)}</textarea>
 
-            <div class="small" style="margin-top:8px">Uploaded: ${state.resumes.map((r) => r.name).join(", ") || "None"}</div>
-            <button id="analyzeBtn" class="btn btn-primary" style="margin-top:10px;width:100%" ${state.analyzing ? "disabled" : ""}>
-              ${state.analyzing ? "Analyzing candidates..." : "Analyze candidates"}
+            <div class="small">Applicants loaded: ${state.resumes.map((resume) => resume.name).join(", ") || "None"}</div>
+            <button id="analyzeBtn" class="btn btn-primary full" ${state.analyzing ? "disabled" : ""}>
+              ${state.analyzing ? "Screening applicants..." : "Run first pass screening"}
             </button>
           </section>
 
           <section class="card">
-            <h3>Extracted recruiter requirements (editable)</h3>
+            <h3>Screening criteria</h3>
             ${
               state.requirements
                 ? `${requirementInputs(state.requirements)}
-                   <div class="small" style="margin-top:8px">Transparent extraction preview</div>
-                   <div class="pill-row">${state.requirements.requiredSkills.map((x) => `<span class="badge b-blue">Must: ${x}</span>`).join("")}</div>
-                   <div class="pill-row" style="margin-top:4px">${state.requirements.preferredSkills.map((x) => `<span class="badge b-gray">Nice: ${x}</span>`).join("")}</div>`
-                : `<div class="small">Paste a job description to extract title, years, skills, location, and certifications.</div>`
+                   <div class="criteria-preview">
+                    <div class="small">Must-have skills</div>
+                    <div class="pill-row">${state.requirements.requiredSkills.map((skill) => `<span class="badge b-blue">${skill}</span>`).join("") || "<span class='muted'>None extracted yet</span>"}</div>
+                    <div class="small">Nice-to-have skills</div>
+                    <div class="pill-row">${state.requirements.preferredSkills.map((skill) => `<span class="badge b-gray">${skill}</span>`).join("") || "<span class='muted'>None extracted yet</span>"}</div>
+                   </div>`
+                : `<div class="small">Paste a job description to extract editable screening criteria.</div>`
             }
           </section>
 
           <section class="card">
-            <h3>Filters and sorting</h3>
-            <label><input type="checkbox" id="fDecision" ${state.filters.decisionOnly ? "checked" : ""}/> Show only Strong Screen / Screen</label><br/>
+            <h3>Review controls</h3>
             <label>Minimum years<input id="fYears" type="number" value="${state.filters.minYears}"/></label>
-            <label><input type="checkbox" id="fLocation" ${state.filters.locationOnly ? "checked" : ""}/> Require location match</label><br/>
-            <label><input type="checkbox" id="fMust" ${state.filters.mustHave ? "checked" : ""}/> Must-have coverage >= 80%</label><br/>
-            <label><input type="checkbox" id="fReject" ${state.filters.noReject ? "checked" : ""}/> No hard reject flags</label><br/>
+            <label class="check"><input type="checkbox" id="fLocation" ${state.filters.locationOnly ? "checked" : ""}/> Require location match</label>
+            <label class="check"><input type="checkbox" id="fMissing" ${state.filters.missingMustHave ? "checked" : ""}/> Show missing must-haves only</label>
+            <label class="check"><input type="checkbox" id="fWeakEvidence" ${state.filters.weakEvidence ? "checked" : ""}/> Show weak evidence only</label>
+            <label class="check"><input type="checkbox" id="fHard" ${state.filters.noHardDisqualifiers ? "checked" : ""}/> Hide hard disqualifiers</label>
             <label>Sort by
               <select id="fSort">
-                <option value="score">fit score</option>
-                <option value="decision">decision</option>
-                <option value="coverage">required skill coverage</option>
+                <option value="bucket">screening bucket</option>
+                <option value="evidence">evidence quality</option>
+                <option value="years">years relevant</option>
+                <option value="score">secondary score</option>
               </select>
             </label>
           </section>
         </aside>
 
-        <section class="grid">
-          ${state.result ? renderResults(state.result) : `<div class="card"><h3>Empty state</h3><p class="muted">Load sample candidates or upload/paste resumes, then analyze.</p></div>`}
-        </section>
+        <main class="grid">
+          ${state.result ? renderResults(state.result) : renderEmptyState()}
+        </main>
       </div>
 
       ${state.selected ? renderDrawer(state.selected) : ""}
@@ -103,10 +108,10 @@ function render() {
 function renderLanding() {
   app.innerHTML = `
     <main class="container hero">
-      <div class="small" style="color:#0369a1;font-weight:600">AI Candidate Screening Assistant</div>
-      <h1>Screen candidates faster with recruiter-style AI summaries</h1>
-      <p>Upload a job description and resumes to get a ranked shortlist, clear match reasoning, reject flags, and skill gap analysis in seconds.</p>
-      <p class="card" style="background:#fffbeb;border-color:#fde68a">Built for validation: this is a prototype for recruiter workflow learning, not a final hiring decision engine.</p>
+      <div class="eyebrow">First pass screening assistant</div>
+      <h1>Get from hundreds of applicants to the candidates worth screening.</h1>
+      <p>Surface strong candidates faster, flag likely mismatches, and give recruiters evidence-based summaries they can actually review.</p>
+      <div class="notice">Assistive prototype for recruiter workflow learning. Final hiring decisions still need human judgment.</div>
       <div class="pill-row">
         <button class="btn btn-primary" id="startBtn">Start screening</button>
         <button class="btn" data-load="pmm">Load sample candidates</button>
@@ -121,144 +126,211 @@ function renderLanding() {
   document.querySelector('[data-load="pmm"]')?.addEventListener("click", () => loadDataset("pmm"));
 }
 
-function renderResults(result) {
-  const rows = getFilteredCandidates(result, state.workspaceTab === "rejects");
-
-  const summaryCards = `
-    <div class="grid stats">
-      <div class="card"><div class="small">Total candidates analyzed</div><div>${result.summary.totalCandidates}</div></div>
-      <div class="card"><div class="small">Average fit score</div><div>${result.summary.avgScore}</div></div>
-      <div class="card"><div class="small">Top 3 screen candidates</div><div>${result.summary.topScreens.map((c) => c.name).join(", ") || "None"}</div></div>
-      <div class="card"><div class="small">Decision buckets</div><div>Strong ${result.summary.decisionCounts["Strong Screen"]} • Screen ${result.summary.decisionCounts.Screen} • Maybe ${result.summary.decisionCounts.Maybe} • Reject ${result.summary.decisionCounts.Reject}</div></div>
-    </div>
-  `;
-
-  const tabs = `
-    <div class="card" style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
-      <div class="pill-row">
-        <button class="btn ${state.workspaceTab === "all" ? "btn-primary" : ""}" id="tabAll">All candidates</button>
-        <button class="btn ${state.workspaceTab === "rejects" ? "btn-primary" : ""}" id="tabRejects">Quick reject workflow</button>
-      </div>
-      <div class="small">${rows.length} shown</div>
-    </div>
-  `;
-
-  if (!rows.length) {
-    return `${summaryCards}${tabs}<div class="card">No candidates match this view. Try adjusting filters.</div>`;
-  }
-
-  return `${summaryCards}${tabs}
-    <div class="card">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Candidate name</th>
-            <th>Fit score</th>
-            <th>Suggested decision</th>
-            <th>Key notes</th>
-            <th>Required skill coverage %</th>
-            <th>Quick flags</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows
-            .map(
-              ({ candidate, coveragePct }) => `<tr class="row-hover" data-candidate="${candidate.id}">
-              <td>${candidate.name}<div class="small">${candidate.parsedTitle}</div></td>
-              <td>${candidate.score}</td>
-              <td>${badge(candidate.suggestedDecision)}</td>
-              <td>${escapeHtml(candidate.keyNote)}</td>
-              <td>${coveragePct}%</td>
-              <td>${escapeHtml(candidate.rejectFlags.slice(0, 2).join(" • ") || "—")}</td>
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-    <div class="card">
-      <h4>Export candidate summaries</h4>
-      <div class="pill-row">
-        <button class="btn" id="copySummaryBtn">Copy summaries</button>
-        <button class="btn" id="copyRejectBtn">Copy reject reasons</button>
-      </div>
-      <p class="small">Disclaimer: assistive output only. Final hiring decisions should include recruiter judgment.</p>
-    </div>
+function renderEmptyState() {
+  return `
+    <section class="empty-state">
+      <h3>Ready for first pass screening</h3>
+      <p>Add a job description and applicants, then run screening to separate strong screens, review candidates, and likely rejects.</p>
+    </section>
   `;
 }
 
-function renderDrawer(c) {
+function renderResults(result) {
+  const rows = getFilteredCandidates(result);
+  const activeLabel = tabLabel(state.workspaceTab);
+
+  return `
+    ${renderSummary(result)}
+    ${renderTabs(result)}
+    ${renderExportPanel(result)}
+    ${
+      rows.length
+        ? `<section class="card table-card">
+            <div class="table-heading">
+              <div>
+                <h3>${activeLabel}</h3>
+                <div class="small">${rows.length} applicants shown</div>
+              </div>
+              <div class="small">Score is secondary; evidence and disqualifiers drive review.</div>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Candidate name</th>
+                    <th>Current or recent role</th>
+                    <th>Screening bucket</th>
+                    <th>Evidence summary</th>
+                    <th>Missing must-haves</th>
+                    <th>Risk / credibility signals</th>
+                    <th>Years relevant</th>
+                    <th>Location</th>
+                    <th>Secondary score</th>
+                  </tr>
+                </thead>
+                <tbody>${rows.map(renderCandidateRow).join("")}</tbody>
+              </table>
+            </div>
+          </section>`
+        : `<section class="empty-state compact">No applicants match this view. Adjust the bucket or review controls.</section>`
+    }
+  `;
+}
+
+function renderSummary(result) {
+  const summary = result.summary;
+  return `
+    <section class="summary-grid">
+      ${statCard("Total applicants", summary.totalApplicants)}
+      ${statCard("Strong screen", summary.strongScreen)}
+      ${statCard("Needs review", summary.needsReview)}
+      ${statCard("Auto rejected", summary.autoRejected)}
+      ${statCard("Top reasons for rejection", countList(summary.topRejectReasons, "No repeated reject reason yet"))}
+      ${statCard("Common missing must-haves", countList(summary.commonMissingMustHaves, "No repeated gaps yet"))}
+    </section>
+  `;
+}
+
+function renderTabs(result) {
+  const counts = {
+    strong: result.summary.strongScreen,
+    review: result.summary.needsReview,
+    reject: result.summary.autoRejected,
+    quickReject: result.candidates.filter((candidate) => candidate.hardDisqualifiers.length).length,
+    all: result.candidates.length
+  };
+
+  return `
+    <nav class="tabs" aria-label="Candidate screening buckets">
+      ${["strong", "review", "reject", "quickReject", "all"]
+        .map(
+          (tab) => `<button class="tab ${state.workspaceTab === tab ? "tab-active" : ""}" data-tab="${tab}">
+            ${tabLabel(tab)} <span>${counts[tab]}</span>
+          </button>`
+        )
+        .join("")}
+    </nav>
+  `;
+}
+
+function renderExportPanel(result) {
+  const strongNames = result.summary.shortlist.map((candidate) => candidate.name).join(", ") || "None yet";
+  return `
+    <section class="export-bar">
+      <div>
+        <strong>Hiring manager shortlist</strong>
+        <div class="small">Strong screens: ${escapeHtml(strongNames)}</div>
+      </div>
+      <div class="pill-row">
+        <button class="btn" id="copyShortlistBtn">Copy shortlist summaries</button>
+        <button class="btn" id="copyReviewBtn">Copy review queue</button>
+        <button class="btn" id="copyRejectBtn">Copy reject reasons</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderCandidateRow(candidate) {
+  const riskItems = unique([...candidate.hardDisqualifiers, candidate.evidenceQuality, ...candidate.credibilitySignals]).slice(0, 3);
+  return `
+    <tr class="row-hover" data-candidate="${candidate.id}">
+      <td><strong>${escapeHtml(candidate.name)}</strong><div class="small">${escapeHtml(candidate.keyNote)}</div></td>
+      <td>${escapeHtml(candidate.parsedTitle)}</td>
+      <td>${badge(candidate.screeningBucket)}</td>
+      <td class="evidence-cell">${escapeHtml(candidate.evidenceSummary)}</td>
+      <td>${tagList(candidate.missingMustHaves, "No missing must-haves", 3)}</td>
+      <td>${tagList(riskItems, "No major flags", 3)}</td>
+      <td>${formatYears(candidate.parsedYearsExperience)}</td>
+      <td>${escapeHtml(candidate.location)}</td>
+      <td><span class="secondary-score">${candidate.secondaryScore}</span></td>
+    </tr>
+  `;
+}
+
+function renderDrawer(candidate) {
+  const rejectButtons = REJECT_REASON_EXAMPLES.map(
+    (reason, index) => `<button class="btn btn-small" data-reject-example="${index}">${escapeHtml(reason)}</button>`
+  ).join("");
+
   return `
     <aside class="drawer" id="drawer">
-      <div style="display:flex;justify-content:space-between;gap:10px">
+      <div class="drawer-head">
         <div>
-          <h2 style="margin:0">${c.name}</h2>
-          <div class="small">${c.parsedTitle} • ${c.location}</div>
+          <div class="small">Candidate screening packet</div>
+          <h2>${escapeHtml(candidate.name)}</h2>
+          <div class="muted">${escapeHtml(candidate.parsedTitle)} | ${formatYears(candidate.parsedYearsExperience)} | ${escapeHtml(candidate.location)}</div>
         </div>
         <button class="btn" id="closeDrawer">Close</button>
       </div>
 
-      <div class="pill-row" style="margin:8px 0">
-        ${badge(`Fit ${c.score}`)}
-        ${badge(c.suggestedDecision)}
+      <div class="pill-row">
+        ${badge(candidate.screeningBucket)}
+        ${badge(candidate.evidenceQuality)}
+        <span class="badge b-gray">Secondary score ${candidate.secondaryScore}</span>
       </div>
 
-      ${drawerSection("Recruiter Summary", `<p>${escapeHtml(c.summary)}</p>`) }
-      ${drawerSection("Why this candidate stands out", list(c.positiveSignals))}
-      ${drawerSection("Why this candidate might still be interesting", `<p>${escapeHtml(c.whyInteresting)}</p>`) }
-      ${drawerSection("Possible concerns", list(c.concerns))}
-      ${drawerSection("Reject Flags", list(c.rejectFlags))}
+      ${drawerSection("Why this candidate is worth screening", `<p>${escapeHtml(candidate.whyScreen)}</p>`)}
+      ${drawerSection("Evidence supporting that", list(candidate.evidenceItems))}
+      ${drawerSection("Missing must-haves", list(candidate.missingMustHaves))}
+      ${drawerSection("Risk or unclear", list(unique([...candidate.risks, ...candidate.credibilitySignals])))}
+      ${drawerSection("Hard disqualifiers", list(candidate.hardDisqualifiers))}
       ${drawerSection(
-        "Skill Coverage Map",
-        `<ul>${c.skillCoverage
-          .map(
-            (s) => `<li>${s.skill} ${s.signal === "supported" ? "✓" : s.signal === "partial" ? "△" : "✕"} <span class="small">${escapeHtml(s.evidence)}</span></li>`
-          )
-          .join("")}</ul><div class="small">Legend: ✓ clearly supported • △ partial/unclear • ✕ not found</div>`
+        "Skill evidence map",
+        `<ul>${candidate.skillCoverage
+          .map((skill) => `<li><strong>${escapeHtml(skill.skill)}</strong>: ${labelSignal(skill.signal)} <span class="small">${escapeHtml(skill.evidence)}</span></li>`)
+          .join("")}</ul>`
       )}
-      ${drawerSection("Suggested screening questions", list(c.suggestedQuestions))}
-      <button class="btn" id="copyQuestionsBtn">Copy screening questions</button>
-      ${drawerSection("Resume preview", `<pre style="white-space:pre-wrap;background:#f8fafc;padding:8px;border-radius:8px">${escapeHtml(c.rawResumeText)}</pre>`) }
+      ${drawerSection("Quick reject reason examples", `<div class="pill-row">${rejectButtons}</div>`)}
+      ${drawerSection("Suggested screening questions", list(candidate.suggestedQuestions))}
+      <div class="pill-row drawer-actions">
+        <button class="btn" id="copyCandidateBtn">Copy candidate packet</button>
+        <button class="btn" id="copyQuestionsBtn">Copy screening questions</button>
+      </div>
+      ${drawerSection("Resume preview", `<pre>${escapeHtml(candidate.rawResumeText)}</pre>`)}
     </aside>
   `;
 }
 
 function bindWorkspaceEvents() {
-  document.querySelectorAll("[data-load]").forEach((btn) => btn.addEventListener("click", () => loadDataset(btn.dataset.load)));
+  document.querySelectorAll("[data-load]").forEach((button) => button.addEventListener("click", () => loadDataset(button.dataset.load)));
 
-  document.getElementById("jobInput")?.addEventListener("input", (e) => {
-    state.jobDescription = e.target.value;
+  document.getElementById("jobInput")?.addEventListener("input", (event) => {
+    state.jobDescription = event.target.value;
     state.requirements = extractRequirements(state.jobDescription);
     render();
   });
 
-  document.getElementById("resumeInput")?.addEventListener("change", async (e) => {
-    await readFilesIntoResumes([...e.target.files || []]);
+  document.getElementById("resumeInput")?.addEventListener("change", async (event) => {
+    await readFilesIntoResumes([...(event.target.files || [])]);
     render();
   });
 
   const dropZone = document.getElementById("dropZone");
   if (dropZone) {
-    ["dragenter", "dragover"].forEach((evt) => dropZone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      dropZone.classList.add("dropzone-active");
-    }));
-    ["dragleave", "drop"].forEach((evt) => dropZone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      dropZone.classList.remove("dropzone-active");
-    }));
-    dropZone.addEventListener("drop", async (e) => {
-      await readFilesIntoResumes([...(e.dataTransfer?.files || [])]);
+    ["dragenter", "dragover"].forEach((eventName) =>
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("dropzone-active");
+      })
+    );
+    ["dragleave", "drop"].forEach((eventName) =>
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("dropzone-active");
+      })
+    );
+    dropZone.addEventListener("drop", async (event) => {
+      await readFilesIntoResumes([...(event.dataTransfer?.files || [])]);
       render();
     });
   }
 
-  document.getElementById("manualResumeName")?.addEventListener("input", (e) => {
-    state.manualResume.name = e.target.value;
+  document.getElementById("manualResumeName")?.addEventListener("input", (event) => {
+    state.manualResume.name = event.target.value;
   });
 
-  document.getElementById("manualResumeText")?.addEventListener("input", (e) => {
-    state.manualResume.text = e.target.value;
+  document.getElementById("manualResumeText")?.addEventListener("input", (event) => {
+    state.manualResume.text = event.target.value;
   });
 
   document.getElementById("addManualResume")?.addEventListener("click", () => {
@@ -281,6 +353,7 @@ function bindWorkspaceEvents() {
     await new Promise((resolve) => setTimeout(resolve, 350));
 
     state.result = analyze(state.jobDescription, state.resumes, state.requirements);
+    state.workspaceTab = "strong";
     state.analyzing = false;
     render();
   });
@@ -288,47 +361,58 @@ function bindWorkspaceEvents() {
   bindRequirementEvents();
   bindFilterEvents();
 
-  document.getElementById("tabAll")?.addEventListener("click", () => {
-    state.workspaceTab = "all";
-    render();
-  });
+  document.querySelectorAll("[data-tab]").forEach((button) =>
+    button.addEventListener("click", () => {
+      state.workspaceTab = button.dataset.tab;
+      render();
+    })
+  );
 
-  document.getElementById("tabRejects")?.addEventListener("click", () => {
-    state.workspaceTab = "rejects";
-    render();
-  });
-
-  document.querySelectorAll("[data-candidate]").forEach((row) => row.addEventListener("click", () => {
-    state.selected = state.result.candidates.find((c) => c.id === row.dataset.candidate);
-    render();
-  }));
+  document.querySelectorAll("[data-candidate]").forEach((row) =>
+    row.addEventListener("click", () => {
+      state.selected = state.result.candidates.find((candidate) => candidate.id === row.dataset.candidate);
+      render();
+    })
+  );
 
   document.getElementById("closeDrawer")?.addEventListener("click", () => {
     state.selected = null;
     render();
   });
 
-  document.getElementById("copySummaryBtn")?.addEventListener("click", async () => {
-    const text = state.result.candidates.map((c) => `${c.name} | ${c.suggestedDecision}\n${c.summary}`).join("\n\n");
-    await navigator.clipboard.writeText(text);
+  document.getElementById("copyShortlistBtn")?.addEventListener("click", () => {
+    copyText(formatCandidateList(state.result.candidates.filter((candidate) => candidate.screeningBucket === "Strong screen")));
   });
 
-  document.getElementById("copyRejectBtn")?.addEventListener("click", async () => {
-    const text = state.result.candidates
-      .filter((c) => c.rejectFlags.length)
-      .map((c) => `${c.name}: ${c.rejectFlags.join("; ")}`)
-      .join("\n");
-    await navigator.clipboard.writeText(text || "No reject flags.");
+  document.getElementById("copyReviewBtn")?.addEventListener("click", () => {
+    copyText(formatCandidateList(state.result.candidates.filter((candidate) => candidate.screeningBucket === "Review")));
   });
 
-  document.getElementById("copyQuestionsBtn")?.addEventListener("click", async () => {
+  document.getElementById("copyRejectBtn")?.addEventListener("click", () => {
+    copyText(formatRejectReasons(state.result.candidates));
+  });
+
+  document.getElementById("copyCandidateBtn")?.addEventListener("click", () => {
     if (!state.selected) return;
-    await navigator.clipboard.writeText(state.selected.suggestedQuestions.join("\n"));
+    copyText(formatCandidateList([state.selected]));
   });
+
+  document.getElementById("copyQuestionsBtn")?.addEventListener("click", () => {
+    if (!state.selected) return;
+    copyText(state.selected.suggestedQuestions.join("\n"));
+  });
+
+  document.querySelectorAll("[data-reject-example]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const reason = REJECT_REASON_EXAMPLES[Number(button.dataset.rejectExample)];
+      const name = state.selected?.name || "Candidate";
+      copyText(`${name}: ${reason}`);
+    })
+  );
 }
 
 async function readFilesIntoResumes(files) {
-  const validFiles = files.filter((f) => /\.(txt|md|text)$/i.test(f.name));
+  const validFiles = files.filter((file) => /\.(txt|md|text)$/i.test(file.name));
   for (const file of validFiles) {
     const text = await file.text();
     state.resumes.push({ id: `upload-${file.name}-${file.size}-${Date.now()}`, name: file.name.replace(/\..+$/, ""), rawResumeText: text });
@@ -336,46 +420,46 @@ async function readFilesIntoResumes(files) {
 }
 
 function bindRequirementEvents() {
-  ["jobTitle", "requiredSkills", "preferredSkills", "minYearsExperience", "location", "industry", "certifications"].forEach((k) => {
-    document.getElementById(`req-${k}`)?.addEventListener("input", (e) => {
+  ["jobTitle", "requiredSkills", "preferredSkills", "minYearsExperience", "location", "industry", "certifications"].forEach((key) => {
+    document.getElementById(`req-${key}`)?.addEventListener("input", (event) => {
       if (!state.requirements) return;
-      const val = e.target.value;
-      state.requirements[k] = ["requiredSkills", "preferredSkills", "certifications"].includes(k)
-        ? split(val)
-        : k === "minYearsExperience"
-          ? Number(val) || 0
-          : val;
+      const value = event.target.value;
+      state.requirements[key] = ["requiredSkills", "preferredSkills", "certifications"].includes(key)
+        ? split(value)
+        : key === "minYearsExperience"
+          ? Number(value) || 0
+          : value;
     });
   });
 }
 
 function bindFilterEvents() {
-  document.getElementById("fDecision")?.addEventListener("change", (e) => {
-    state.filters.decisionOnly = e.target.checked;
+  document.getElementById("fYears")?.addEventListener("input", (event) => {
+    state.filters.minYears = Number(event.target.value) || 0;
     render();
   });
-  document.getElementById("fYears")?.addEventListener("input", (e) => {
-    state.filters.minYears = Number(e.target.value) || 0;
+  document.getElementById("fLocation")?.addEventListener("change", (event) => {
+    state.filters.locationOnly = event.target.checked;
     render();
   });
-  document.getElementById("fLocation")?.addEventListener("change", (e) => {
-    state.filters.locationOnly = e.target.checked;
+  document.getElementById("fMissing")?.addEventListener("change", (event) => {
+    state.filters.missingMustHave = event.target.checked;
     render();
   });
-  document.getElementById("fMust")?.addEventListener("change", (e) => {
-    state.filters.mustHave = e.target.checked;
+  document.getElementById("fWeakEvidence")?.addEventListener("change", (event) => {
+    state.filters.weakEvidence = event.target.checked;
     render();
   });
-  document.getElementById("fReject")?.addEventListener("change", (e) => {
-    state.filters.noReject = e.target.checked;
+  document.getElementById("fHard")?.addEventListener("change", (event) => {
+    state.filters.noHardDisqualifiers = event.target.checked;
     render();
   });
 
   const sort = document.getElementById("fSort");
   if (sort) {
     sort.value = state.filters.sort;
-    sort.addEventListener("change", (e) => {
-      state.filters.sort = e.target.value;
+    sort.addEventListener("change", (event) => {
+      state.filters.sort = event.target.value;
       render();
     });
   }
@@ -383,7 +467,7 @@ function bindFilterEvents() {
 
 function requirementInputs(req) {
   return `
-    <label>Job title<input id="req-jobTitle" value="${escapeHtml(req.jobTitle)}"/></label>
+    <label>Role<input id="req-jobTitle" value="${escapeHtml(req.jobTitle)}"/></label>
     <label>Must-have skills<input id="req-requiredSkills" value="${escapeHtml(req.requiredSkills.join(", "))}"/></label>
     <label>Nice-to-have skills<input id="req-preferredSkills" value="${escapeHtml(req.preferredSkills.join(", "))}"/></label>
     <label>Minimum years<input id="req-minYearsExperience" value="${req.minYearsExperience}"/></label>
@@ -393,36 +477,37 @@ function requirementInputs(req) {
   `;
 }
 
-function getFilteredCandidates(result, rejectsOnly) {
+function getFilteredCandidates(result) {
   const req = state.requirements;
-  let rows = result.candidates.map((c) => ({
-    candidate: c,
-    coveragePct: c.skillCoverage.length ? Math.round((c.skillCoverage.filter((s) => s.signal === "supported").length / c.skillCoverage.length) * 100) : 0
-  }));
+  let rows = [...result.candidates];
 
-  if (rejectsOnly) rows = rows.filter((r) => r.candidate.suggestedDecision === "Reject" || r.candidate.rejectFlags.length > 0);
-  if (state.filters.decisionOnly) rows = rows.filter((r) => ["Strong Screen", "Screen"].includes(r.candidate.suggestedDecision));
+  if (state.workspaceTab === "strong") rows = rows.filter((candidate) => candidate.screeningBucket === "Strong screen");
+  if (state.workspaceTab === "review") rows = rows.filter((candidate) => candidate.screeningBucket === "Review");
+  if (state.workspaceTab === "reject") rows = rows.filter((candidate) => candidate.screeningBucket === "Reject");
+  if (state.workspaceTab === "quickReject") rows = rows.filter((candidate) => candidate.hardDisqualifiers.length > 0 || candidate.screeningBucket === "Reject");
 
-  rows = rows.filter((r) => r.candidate.parsedYearsExperience >= state.filters.minYears);
+  rows = rows.filter((candidate) => candidate.parsedYearsExperience >= state.filters.minYears);
 
   if (state.filters.locationOnly && req) {
-    rows = rows.filter((r) => r.candidate.location.toLowerCase().includes(req.location.split(",")[0].toLowerCase()));
+    rows = rows.filter((candidate) => candidate.location.toLowerCase().includes(req.location.split(",")[0].toLowerCase()));
   }
 
-  if (state.filters.mustHave) rows = rows.filter((r) => r.coveragePct >= 80);
-  if (state.filters.noReject) rows = rows.filter((r) => r.candidate.rejectFlags.length === 0);
+  if (state.filters.missingMustHave) rows = rows.filter((candidate) => candidate.missingMustHaves.length > 0);
+  if (state.filters.weakEvidence) rows = rows.filter((candidate) => candidate.evidenceQuality === "Weak evidence");
+  if (state.filters.noHardDisqualifiers) rows = rows.filter((candidate) => candidate.hardDisqualifiers.length === 0);
 
   rows.sort((a, b) => {
-    if (state.filters.sort === "coverage") return b.coveragePct - a.coveragePct;
-    if (state.filters.sort === "decision") return rank(a.candidate.suggestedDecision) - rank(b.candidate.suggestedDecision);
-    return b.candidate.score - a.candidate.score;
+    if (state.filters.sort === "evidence") return evidenceRank(a.evidenceQuality) - evidenceRank(b.evidenceQuality) || b.secondaryScore - a.secondaryScore;
+    if (state.filters.sort === "years") return b.parsedYearsExperience - a.parsedYearsExperience;
+    if (state.filters.sort === "score") return b.secondaryScore - a.secondaryScore;
+    return bucketRank(a.screeningBucket) - bucketRank(b.screeningBucket) || evidenceRank(a.evidenceQuality) - evidenceRank(b.evidenceQuality) || b.secondaryScore - a.secondaryScore;
   });
 
   return rows;
 }
 
 function loadDataset(id) {
-  const dataset = SAMPLE_DATASETS.find((x) => x.id === id);
+  const dataset = SAMPLE_DATASETS.find((item) => item.id === id);
   if (!dataset) return;
 
   state.started = true;
@@ -431,16 +516,49 @@ function loadDataset(id) {
   state.requirements = extractRequirements(dataset.jobDescription);
   state.result = null;
   state.selected = null;
-  state.workspaceTab = "all";
+  state.workspaceTab = "strong";
   render();
 }
 
-function rank(decision) {
-  return { "Strong Screen": 0, Screen: 1, Maybe: 2, Reject: 3 }[decision] ?? 9;
+function formatCandidateList(candidates) {
+  if (!candidates.length) return "No candidates in this queue.";
+  return candidates
+    .map(
+      (candidate) => `${candidate.name} | ${candidate.screeningBucket} | ${candidate.parsedTitle} | ${formatYears(candidate.parsedYearsExperience)} | ${candidate.location}
+Why screen: ${candidate.whyScreen}
+Evidence: ${candidate.evidenceItems.slice(0, 3).join("; ") || "No concrete evidence found."}
+Missing: ${candidate.missingMustHaves.join(", ") || "No missing must-haves found."}
+Risk or unclear: ${unique([...candidate.hardDisqualifiers, ...candidate.risks]).join("; ") || "No major flags."}`
+    )
+    .join("\n\n");
 }
 
-function split(value) {
-  return value.split(",").map((x) => x.trim()).filter(Boolean);
+function formatRejectReasons(candidates) {
+  const rejected = candidates.filter((candidate) => candidate.screeningBucket === "Reject" || candidate.hardDisqualifiers.length);
+  if (!rejected.length) return "No structured reject reasons yet.";
+  return rejected
+    .map((candidate) => `${candidate.name}: ${candidate.hardDisqualifiers.join("; ") || "Recruiter review needed"} | Missing: ${candidate.missingMustHaves.join(", ") || "None found"}`)
+    .join("\n");
+}
+
+function copyText(text) {
+  navigator.clipboard?.writeText(text);
+}
+
+function statCard(label, value) {
+  return `<div class="stat-card"><div class="small">${label}</div><div class="stat-value">${value}</div></div>`;
+}
+
+function countList(items, fallback) {
+  if (!items?.length) return `<span class="muted">${fallback}</span>`;
+  return `<ul class="count-list">${items.map((item) => `<li>${escapeHtml(item.label)} <span>${item.count}</span></li>`).join("")}</ul>`;
+}
+
+function tagList(items, fallback, limit = 3) {
+  if (!items?.length) return `<span class="muted">${fallback}</span>`;
+  const visible = items.slice(0, limit);
+  const extra = items.length > limit ? `<span class="tag">+${items.length - limit}</span>` : "";
+  return `${visible.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")}${extra}`;
 }
 
 function drawerSection(title, body) {
@@ -448,13 +566,54 @@ function drawerSection(title, body) {
 }
 
 function list(items) {
-  if (!items?.length) return "<div class='small'>None.</div>";
-  return `<ul>${items.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+  if (!items?.length) return "<div class='small'>None found in this first pass.</div>";
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
 function badge(text) {
-  const tone = text.includes("Strong") ? "b-green" : text === "Screen" ? "b-blue" : text === "Maybe" ? "b-yellow" : text.includes("Reject") ? "b-red" : "b-gray";
+  const tone =
+    text === "Strong screen" || text === "Strong evidence"
+      ? "b-green"
+      : text === "Review" || text === "Moderate evidence"
+        ? "b-blue"
+        : text === "Reject" || text === "Weak evidence"
+          ? "b-red"
+          : "b-gray";
   return `<span class="badge ${tone}">${escapeHtml(text)}</span>`;
+}
+
+function labelSignal(signal) {
+  return { supported: "Supported", partial: "Partial", missing: "Missing" }[signal] || signal;
+}
+
+function tabLabel(tab) {
+  return {
+    strong: "Strong screen",
+    review: "Review",
+    reject: "Reject",
+    quickReject: "Quick reject queue",
+    all: "All applicants"
+  }[tab];
+}
+
+function bucketRank(bucket) {
+  return { "Strong screen": 0, Review: 1, Reject: 2 }[bucket] ?? 9;
+}
+
+function evidenceRank(quality) {
+  return { "Strong evidence": 0, "Moderate evidence": 1, "Weak evidence": 2 }[quality] ?? 9;
+}
+
+function formatYears(value) {
+  return value ? `${value} yrs` : "Unknown";
+}
+
+function split(value) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function unique(items) {
+  return [...new Set(items.filter(Boolean))];
 }
 
 function escapeHtml(value) {

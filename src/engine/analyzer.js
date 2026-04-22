@@ -1,96 +1,400 @@
-const SKILLS = ["salesforce","hubspot","go-to-market","positioning","customer research","lifecycle marketing","pricing","sql","outbound prospecting","meddicc","meddpicc","enterprise sales","node.js","python","microservices","rest","postgresql","aws","gcp","kubernetes","event-driven","testing","pci","soc2"];
-const LOCS = ["san francisco","austin","new york","seattle","los angeles","dallas","boston","new jersey"];
+const SKILL_DEFS = [
+  { label: "product marketing", terms: ["product marketing", "product marketer"] },
+  { label: "go-to-market", terms: ["go-to-market", "gtm"] },
+  { label: "messaging", terms: ["messaging", "message testing", "narrative"] },
+  { label: "positioning", terms: ["positioning", "competitive positioning"] },
+  { label: "customer research", terms: ["customer research", "customer interviews", "research", "persona"] },
+  { label: "cross-functional collaboration", terms: ["cross-functional", "partnered with product", "partnered with sales", "sales/product"] },
+  { label: "sales enablement", terms: ["sales enablement", "enablement", "sales one-pagers", "battlecards"] },
+  { label: "pricing", terms: ["pricing", "packaging", "pricing strategy"] },
+  { label: "lifecycle marketing", terms: ["lifecycle marketing", "lifecycle campaigns"] },
+  { label: "hubspot", terms: ["hubspot"] },
+  { label: "sql", terms: ["sql"] },
+  { label: "salesforce", terms: ["salesforce"] },
+  { label: "quota ownership", terms: ["quota", "quota-carrying", "attainment"] },
+  { label: "closing", terms: ["closing", "closed", "deal ownership"] },
+  { label: "outbound prospecting", terms: ["outbound prospecting", "outbound", "prospecting"] },
+  { label: "meddicc", terms: ["meddicc", "meddpicc"] },
+  { label: "enterprise sales", terms: ["enterprise sales", "enterprise ae", "multi-threaded"] },
+  { label: "backend engineering", terms: ["backend engineering", "backend engineer", "backend"] },
+  { label: "node.js or python", terms: ["node.js", "node", "python"] },
+  { label: "node.js", terms: ["node.js", "node"] },
+  { label: "python", terms: ["python"] },
+  { label: "microservices", terms: ["microservices", "services"] },
+  { label: "rest apis", terms: ["rest api", "rest apis", "rest", "api", "apis"] },
+  { label: "postgresql", terms: ["postgresql", "postgres"] },
+  { label: "cloud deployment", terms: ["cloud deployment", "aws", "gcp", "ecs", "google cloud"] },
+  { label: "aws", terms: ["aws", "ecs"] },
+  { label: "gcp", terms: ["gcp", "google cloud"] },
+  { label: "testing", terms: ["testing", "test coverage", "unit tests", "integration tests"] },
+  { label: "kubernetes", terms: ["kubernetes", "k8s"] },
+  { label: "event-driven", terms: ["event-driven", "kafka", "queues", "event streams"] },
+  { label: "pci", terms: ["pci"] },
+  { label: "soc2", terms: ["soc2", "soc 2"] }
+];
 
-const n=(s)=>s.toLowerCase();
-const years=(t)=>Math.max(0,...[...t.matchAll(/(\d{1,2})\+?\s+years?/gi)].map(m=>Number(m[1])));
-const skills=(t)=>SKILLS.filter(s=>n(t).includes(s));
-const location=(t)=>LOCS.find(l=>n(t).includes(l)) || "Unknown";
-const title=(t)=> /account executive/i.test(t)?"Account Executive":/product marketing/i.test(t)?"Product Marketing":/backend|engineer/i.test(t)?"Backend Engineer":/manager/i.test(t)?"Manager":"Unknown";
+const LOCS = ["san francisco", "austin", "new york", "seattle", "los angeles", "dallas", "boston", "new jersey"];
+export const REJECT_REASON_EXAMPLES = [
+  "Wrong location",
+  "Below minimum years",
+  "Missing mandatory skill evidence",
+  "No relevant function match",
+  "Insufficient evidence for required experience"
+];
 
-export function extractRequirements(jobDescription){
-  const lower=n(jobDescription);
-  const all=SKILLS.filter(s=>lower.includes(s));
+const OWNERSHIP_VERBS = ["led", "owned", "built", "launched", "managed", "closed", "delivered", "designed", "implemented", "partnered", "migrated", "created", "drove"];
+const GENERIC_PHRASES = ["strong leadership", "excellent communication", "team player", "hardworking", "results-driven", "dynamic", "proven track record", "fast-paced environment"];
+const BUZZWORDS = ["strategic", "innovative", "scalable", "world-class", "data-driven", "growth", "impact", "synergy", "transformation", "cutting-edge", "optimized"];
+
+const n = (s) => String(s || "").toLowerCase();
+const unique = (items) => [...new Set(items.filter(Boolean))];
+
+function years(text) {
+  const matches = [...String(text || "").matchAll(/(\d+(?:\.\d+)?)\+?\s+years?/gi)].map((m) => Number(m[1]));
+  return Math.max(0, ...matches);
+}
+
+function sentences(text) {
+  return String(text || "")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function hasAny(text, terms) {
+  const lower = n(text);
+  return terms.some((term) => hasTerm(lower, term));
+}
+
+function hasTerm(lowerText, term) {
+  const lowerTerm = n(term);
+  if (/^[a-z0-9.+#-]+$/.test(lowerTerm)) {
+    const escaped = lowerTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lowerText);
+  }
+  return lowerText.includes(lowerTerm);
+}
+
+function isNegativeEvidence(sentence) {
+  return /\b(no|not|without|unclear|limited|missing)\b|does not|not listed|not clear/i.test(sentence);
+}
+
+function skillDef(skill) {
+  return SKILL_DEFS.find((def) => def.label === skill);
+}
+
+function detectSkills(text) {
+  const resumeSentences = sentences(text);
+  return SKILL_DEFS.filter((def) => resumeSentences.some((sentence) => hasAny(sentence, def.terms) && !isNegativeEvidence(sentence))).map((def) => def.label);
+}
+
+function skillEvidence(skill, text) {
+  const def = skillDef(skill);
+  if (!def) return "";
+  return sentences(text).find((sentence) => hasAny(sentence, def.terms) && !isNegativeEvidence(sentence)) || "";
+}
+
+function title(text) {
+  if (/account executive|\benterprise ae\b|\bmid-market ae\b/i.test(text)) return "Account Executive";
+  if (/product marketing|product marketer/i.test(text)) return "Product Marketing";
+  if (/backend|software engineer|platform engineer|full-stack engineer/i.test(text)) return "Backend Engineer";
+  if (/data engineer/i.test(text)) return "Data Engineer";
+  if (/marketing manager|director of marketing/i.test(text)) return "Marketing";
+  if (/sdr manager/i.test(text)) return "Sales Development";
+  if (/manager/i.test(text)) return "Manager";
+  return "Unknown";
+}
+
+function roleFamily(text) {
+  if (/product marketing|product marketer/i.test(text)) return "product marketing";
+  if (/account executive|\bae\b|sales|sdr/i.test(text)) return "sales";
+  if (/backend|software engineer|platform engineer|full-stack engineer|developer/i.test(text)) return "engineering";
+  if (/marketing/i.test(text)) return "marketing";
+  return "unknown";
+}
+
+function location(text) {
+  return LOCS.find((loc) => n(text).includes(loc)) || "Unknown";
+}
+
+function locationMatches(candidateLocation, reqLocation) {
+  if (!reqLocation || reqLocation === "Flexible") return true;
+  return n(candidateLocation).includes(n(reqLocation).split(",")[0]);
+}
+
+function extractJobTitle(jobDescription) {
+  const direct = jobDescription.match(/hiring\s+(?:a|an)?\s*([^\.]+?)\s+(?:in|for)/i)?.[1];
+  const needed = jobDescription.match(/^\s*([^\.]+?)\s+needed\s+(?:in|for)/i)?.[1];
+  return (direct || needed || "Target Role").replace(/^(a|an)\s+/i, "").trim();
+}
+
+function normalizeRequirementSkills(skills) {
+  let normalized = [...skills];
+  if (normalized.includes("node.js or python")) {
+    normalized = normalized.filter((skill) => !["node.js", "python"].includes(skill));
+  }
+  if (normalized.includes("cloud deployment")) {
+    normalized = normalized.filter((skill) => !["aws", "gcp"].includes(skill));
+  }
+  return normalized;
+}
+
+export function extractRequirements(jobDescription) {
+  const lower = n(jobDescription);
+  const preferredMatch = jobDescription.match(/\bpreferred\b\s*:?\s*/i);
+  const requiredText = preferredMatch ? jobDescription.slice(0, preferredMatch.index) : jobDescription;
+  const preferredText = preferredMatch ? jobDescription.slice(preferredMatch.index + preferredMatch[0].length) : "";
+  const requiredSkills = normalizeRequirementSkills(detectSkills(requiredText)).slice(0, 8);
+  const preferredSkills = normalizeRequirementSkills(detectSkills(preferredText)).filter((skill) => !requiredSkills.includes(skill)).slice(0, 8);
+  const allSkills = detectSkills(jobDescription);
+
   return {
-    jobTitle: (jobDescription.match(/hiring\s+([^\.]+?)\s+(in|for)/i)?.[1]||"Target Role").trim(),
-    requiredSkills: all.slice(0,6),
-    preferredSkills: all.slice(6,11),
-    minYearsExperience: years(jobDescription)||3,
-    location: LOCS.find(l=>lower.includes(l)) || "Flexible",
-    certifications: ["license","certification","pci","soc2"].filter(c=>lower.includes(c)),
-    industry: ["saas","fintech","hr tech","payments"].find(i=>lower.includes(i))||"general",
-    keywords: all.slice(0,8)
+    jobTitle: extractJobTitle(jobDescription),
+    requiredSkills: requiredSkills.length ? requiredSkills : allSkills.slice(0, 6),
+    preferredSkills: preferredSkills.length ? preferredSkills : allSkills.filter((skill) => !requiredSkills.includes(skill)).slice(0, 5),
+    minYearsExperience: years(jobDescription) || 3,
+    location: LOCS.find((loc) => lower.includes(loc)) || "Flexible",
+    certifications: ["license", "certification", "pci", "soc2"].filter((c) => lower.includes(c)),
+    industry: ["saas", "fintech", "hr tech", "payments"].find((i) => lower.includes(i)) || "general",
+    keywords: allSkills.slice(0, 10)
   };
 }
 
-function parse(candidate){
-  return { ...candidate, parsedTitle:title(candidate.rawResumeText), parsedSkills:skills(candidate.rawResumeText), parsedYearsExperience:years(candidate.rawResumeText), location:location(candidate.rawResumeText) };
+function parse(candidate) {
+  const rawResumeText = candidate.rawResumeText || "";
+  return {
+    ...candidate,
+    rawResumeText,
+    parsedTitle: title(rawResumeText),
+    parsedSkills: detectSkills(rawResumeText),
+    parsedYearsExperience: years(rawResumeText),
+    location: location(rawResumeText),
+    roleFamily: roleFamily(rawResumeText)
+  };
 }
 
-function score(parsed, req){
-  const coverage=req.requiredSkills.map(skill=>{
-    const has=parsed.parsedSkills.includes(skill);
-    const partial=!has && n(parsed.rawResumeText).includes(skill.split(' ')[0]);
-    return {skill,signal:has?"supported":partial?"partial":"missing",evidence:has?`Explicit ${skill}`:partial?`Partial mention`:"No evidence"};
+function buildCoverage(parsed, req) {
+  return req.requiredSkills.map((skill) => {
+    const def = skillDef(skill);
+    const evidence = skillEvidence(skill, parsed.rawResumeText);
+    const supported = parsed.parsedSkills.includes(skill);
+    const partial = !supported && def?.terms.some((term) => term.length > 5 && n(parsed.rawResumeText).includes(term.split(" ")[0]));
+
+    return {
+      skill,
+      signal: supported ? "supported" : partial ? "partial" : "missing",
+      evidence: supported ? evidence || `Resume explicitly names ${skill}.` : partial ? "Related language appears, but direct ownership is unclear." : "No supporting evidence found."
+    };
   });
-  const matched=coverage.filter(x=>x.signal==="supported").length;
-  const coveragePct=req.requiredSkills.length?Math.round((matched/req.requiredSkills.length)*100):0;
-  let points=Math.round((coveragePct/100)*50);
-  const positive=[]; const concerns=[]; const reject=[];
+}
 
-  if(parsed.parsedYearsExperience>=req.minYearsExperience){points+=15;positive.push(`${parsed.parsedYearsExperience} years meets bar`)}
-  else {points+=Math.round((parsed.parsedYearsExperience/Math.max(1,req.minYearsExperience))*10); concerns.push(`Below ${req.minYearsExperience}+ years`); reject.push("Below minimum years of experience")}
+function actionSentences(text) {
+  return sentences(text).filter((sentence) => hasAny(sentence, OWNERSHIP_VERBS) || /\d/.test(sentence));
+}
 
-  const prefHits=req.preferredSkills.filter(s=>parsed.parsedSkills.includes(s));
-  points += prefHits.length*4; if(prefHits.length) positive.push(`Preferred skills: ${prefHits.slice(0,2).join(', ')}`);
+function evidenceItems(parsed, req, coverage) {
+  const supportedEvidence = coverage
+    .filter((item) => item.signal === "supported" && item.evidence && item.evidence !== `Resume explicitly names ${item.skill}.`)
+    .map((item) => item.evidence);
+  const roleEvidence = actionSentences(parsed.rawResumeText);
+  const preferredEvidence = req.preferredSkills
+    .filter((skill) => parsed.parsedSkills.includes(skill))
+    .map((skill) => skillEvidence(skill, parsed.rawResumeText))
+    .filter(Boolean);
 
-  if(req.location!=="Flexible"){
-    if(n(parsed.location).includes(n(req.location).split(',')[0])) {points+=10; positive.push("Location match");}
-    else {concerns.push("Wrong location"); reject.push("Wrong location");}
+  return unique([...supportedEvidence, ...roleEvidence, ...preferredEvidence]).slice(0, 6);
+}
+
+function evidenceQuality(parsed, coverage, evidence) {
+  const lower = n(parsed.rawResumeText);
+  const supportedCount = coverage.filter((item) => item.signal === "supported").length;
+  const listedSkills = parsed.parsedSkills.length;
+  const actions = actionSentences(parsed.rawResumeText);
+  const flags = [];
+
+  if (GENERIC_PHRASES.some((phrase) => lower.includes(phrase))) flags.push("Generic wording");
+  if (listedSkills >= 8 && actions.length <= 1) flags.push("Heavy keyword list with limited proof");
+  if (supportedCount > 0 && evidence.length < 2) flags.push("Weak supporting evidence");
+  if (!hasAny(parsed.rawResumeText, OWNERSHIP_VERBS)) flags.push("Unclear ownership of work");
+  if (BUZZWORDS.filter((word) => lower.includes(word)).length >= 4) flags.push("High buzzword density");
+  if (parsed.parsedTitle === "Unknown" || parsed.parsedYearsExperience === 0) flags.push("Unclear career story");
+  if (flags.includes("Generic wording") && flags.includes("High buzzword density") && !/\d/.test(parsed.rawResumeText)) {
+    flags.push("Resume language may be optimized or generic");
   }
 
-  if(parsed.parsedTitle!=="Unknown") points += 7; else concerns.push("Title unclear");
-  if(coveragePct<50) reject.push("Missing mandatory tool or skill evidence");
-  if(coveragePct<70) concerns.push(`Required skill coverage only ${coveragePct}%`); else positive.push(`Required skill coverage ${coveragePct}%`);
+  let level = "Weak evidence";
+  const ownershipIsClear = !flags.includes("Unclear ownership of work") && !flags.includes("Weak supporting evidence");
 
-  const score=Math.max(0,Math.min(100,Math.round(points)));
-  const hardReject=reject.includes("Below minimum years of experience") && coveragePct<35;
-  const decision=hardReject||score<45?"Reject":score>=82?"Strong Screen":score>=65?"Screen":"Maybe";
-  const gaps=coverage.filter(c=>c.signal==="missing").map(c=>c.skill);
+  if (supportedCount >= Math.max(3, Math.ceil(coverage.length * 0.65)) && evidence.length >= 3 && flags.length <= 1 && ownershipIsClear) {
+    level = "Strong evidence";
+  } else if (supportedCount >= Math.max(2, Math.ceil(coverage.length * 0.4)) || evidence.length >= 2) {
+    level = "Moderate evidence";
+  }
+
+  return { level, flags: unique(flags) };
+}
+
+function roleMatches(req, parsed, coveragePct) {
+  const targetFamily = roleFamily(req.jobTitle);
+  if (targetFamily === "unknown") return true;
+  if (targetFamily === parsed.roleFamily) return true;
+  if (targetFamily === "product marketing" && parsed.roleFamily === "marketing" && coveragePct >= 45) return true;
+  return false;
+}
+
+function topCounts(items) {
+  return Object.entries(
+    items.reduce((acc, item) => {
+      acc[item] = (acc[item] || 0) + 1;
+      return acc;
+    }, {})
+  )
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([label, count]) => ({ label, count }));
+}
+
+function score(parsed, req) {
+  const coverage = buildCoverage(parsed, req);
+  const supported = coverage.filter((item) => item.signal === "supported").length;
+  const partial = coverage.filter((item) => item.signal === "partial").length;
+  const coveragePct = req.requiredSkills.length ? Math.round(((supported + partial * 0.5) / req.requiredSkills.length) * 100) : 0;
+  const missingMustHaves = coverage.filter((item) => item.signal === "missing").map((item) => item.skill);
+  const evidence = evidenceItems(parsed, req, coverage);
+  const quality = evidenceQuality(parsed, coverage, evidence);
+  const hardDisqualifiers = [];
+  const risks = [];
+  const positives = [];
+
+  if (parsed.parsedYearsExperience >= req.minYearsExperience) {
+    positives.push(`${parsed.parsedYearsExperience} years meets the minimum requirement.`);
+  } else {
+    hardDisqualifiers.push("Below minimum years");
+  }
+
+  if (!locationMatches(parsed.location, req.location)) hardDisqualifiers.push("Wrong location");
+  if (coveragePct < 50) hardDisqualifiers.push("Missing mandatory skill evidence");
+  if (!roleMatches(req, parsed, coveragePct)) hardDisqualifiers.push("No relevant function match");
+  if (quality.level === "Weak evidence" && coveragePct < 55) hardDisqualifiers.push("Insufficient evidence for required experience");
+
+  const preferredHits = req.preferredSkills.filter((skill) => parsed.parsedSkills.includes(skill));
+  if (preferredHits.length) positives.push(`Nice-to-have evidence: ${preferredHits.slice(0, 3).join(", ")}.`);
+  if (coveragePct >= 70) positives.push(`${supported} must-haves have direct supporting evidence.`);
+
+  if (coverage.some((item) => item.signal === "partial")) risks.push("Some must-haves are only partially supported.");
+  if (quality.level === "Weak evidence") risks.push("Evidence is thin; verify direct ownership and outcomes.");
+  risks.push(...quality.flags);
+
+  const yearPoints = Math.min(15, Math.round((parsed.parsedYearsExperience / Math.max(1, req.minYearsExperience)) * 15));
+  const scoreValue = Math.round(
+    coveragePct * 0.58 +
+      yearPoints +
+      preferredHits.length * 3 +
+      (locationMatches(parsed.location, req.location) ? 7 : 0) +
+      (quality.level === "Strong evidence" ? 10 : quality.level === "Moderate evidence" ? 5 : 0)
+  );
+  const secondaryScore = Math.max(0, Math.min(100, scoreValue));
+
+  let screeningBucket = "Review";
+  if (
+    hardDisqualifiers.length >= 2 ||
+    coveragePct < 35 ||
+    (hardDisqualifiers.includes("Below minimum years") && coveragePct < 65) ||
+    (hardDisqualifiers.includes("Wrong location") && coveragePct < 75)
+  ) {
+    screeningBucket = "Reject";
+  } else if (
+    hardDisqualifiers.length === 0 &&
+    coveragePct >= 65 &&
+    parsed.parsedYearsExperience >= req.minYearsExperience &&
+    (quality.level === "Strong evidence" || (quality.level === "Moderate evidence" && missingMustHaves.length === 0 && quality.flags.length === 0))
+  ) {
+    screeningBucket = "Strong screen";
+  }
+
+  const evidenceSummary = evidence.length
+    ? evidence.slice(0, 2).join(" ")
+    : `Resume does not provide concrete examples for ${missingMustHaves.slice(0, 2).join(" or ") || "the core requirements"}.`;
+  const whyScreen =
+    screeningBucket === "Reject"
+      ? `Do not prioritize unless a recruiter overrides: ${unique(hardDisqualifiers).join("; ")}.`
+      : `Worth screening because the resume gives evidence such as: ${evidence.slice(0, 2).join(" ") || "limited but relevant signals to verify."}`;
+  const missingSummary = missingMustHaves.length ? `Missing evidence for ${missingMustHaves.slice(0, 4).join(", ")}.` : "No missing must-haves found in the first pass.";
+  const riskSummary = risks.length ? risks.slice(0, 3).join("; ") : "No major credibility concerns surfaced in the first pass.";
 
   return {
-    score, decision, coveragePct, coverage,
-    summary: `${parsed.name} appears to bring ${parsed.parsedYearsExperience||0} years of relevant experience. Strengths include ${positive.slice(0,2).join(' and ')||'limited direct match'}. Concerns include ${concerns.slice(0,2).join('; ')||'no major issues identified'} for this ${req.jobTitle} role.`,
-    positiveSignals: positive,
-    concerns,
-    rejectFlags:[...new Set(reject)],
-    keyNote: positive[0] || concerns[0] || "Mixed signal profile",
-    whyInteresting: gaps.length?`Missing ${gaps[0]}, but still interesting due to transferable strengths in ${parsed.parsedSkills.slice(0,2).join(' and ')||'adjacent skills'}.`:"Strong direct alignment with role requirements.",
-    suggestedQuestions:[
-      `Can you walk me through your most relevant experience for ${req.jobTitle}?`,
-      `Which project best shows ${req.requiredSkills.slice(0,2).join(' and ')}?`,
-      gaps[0]?`I noticed a gap around ${gaps[0]}. How have you handled this area?`:"What outcomes are you most proud of in your recent role?",
-      "What are you looking for in your next move?"
+    score: secondaryScore,
+    secondaryScore,
+    screeningBucket,
+    suggestedDecision: screeningBucket,
+    decision: screeningBucket,
+    coveragePct,
+    coverage,
+    skillCoverage: coverage,
+    missingMustHaves,
+    hardDisqualifiers: unique(hardDisqualifiers),
+    rejectFlags: unique(hardDisqualifiers),
+    rejectReasonExamples: REJECT_REASON_EXAMPLES,
+    evidenceItems: evidence,
+    evidenceSummary,
+    evidenceQuality: quality.level,
+    credibilitySignals: quality.flags,
+    positiveSignals: positives,
+    risks: unique(risks),
+    concerns: unique([...risks, ...hardDisqualifiers]),
+    keyNote: evidence[0] || hardDisqualifiers[0] || "Needs recruiter review.",
+    whyScreen,
+    whatIsMissing: missingSummary,
+    whatIsRisky: riskSummary,
+    summary: `${whyScreen} ${missingSummary} Risk or unclear: ${riskSummary}`,
+    whyInteresting: whyScreen,
+    suggestedQuestions: [
+      `Which work best proves direct ownership of ${req.requiredSkills.slice(0, 2).join(" and ")}?`,
+      evidence[0] ? `Can you walk through the outcome behind this resume evidence: ${evidence[0]}?` : `What concrete project best shows readiness for ${req.jobTitle}?`,
+      missingMustHaves[0] ? `I did not see clear evidence for ${missingMustHaves[0]}. How have you handled that area?` : "Which result would your last manager point to as your strongest proof point?",
+      quality.flags.length ? `Some resume evidence is ${quality.level.toLowerCase()}. What should we verify in the screen?` : "What scope, metrics, and tradeoffs were you personally accountable for?"
     ]
-  }
+  };
 }
 
-export function analyze(jobDescription, candidates, edited){
-  const requirements=edited || extractRequirements(jobDescription);
-  const analyzed=candidates.map(c=>{
-    const p=parse(c); const r=score(p,requirements);
-    return {...p,...r,suggestedDecision:r.decision,skillCoverage:r.coverage};
-  }).sort((a,b)=>b.score-a.score);
+function bucketRank(candidate) {
+  return { "Strong screen": 0, Review: 1, Reject: 2 }[candidate.screeningBucket] ?? 9;
+}
 
-  const decisionCounts={"Strong Screen":0,Screen:0,Maybe:0,Reject:0};
-  analyzed.forEach(c=>decisionCounts[c.suggestedDecision]++);
+function qualityRank(candidate) {
+  return { "Strong evidence": 0, "Moderate evidence": 1, "Weak evidence": 2 }[candidate.evidenceQuality] ?? 9;
+}
+
+export function analyze(jobDescription, candidates, edited) {
+  const requirements = edited || extractRequirements(jobDescription);
+  const analyzed = candidates
+    .map((candidate) => {
+      const parsed = parse(candidate);
+      const result = score(parsed, requirements);
+      return { ...parsed, ...result };
+    })
+    .sort((a, b) => bucketRank(a) - bucketRank(b) || qualityRank(a) - qualityRank(b) || b.secondaryScore - a.secondaryScore);
+
+  const bucketCounts = { "Strong screen": 0, Review: 0, Reject: 0 };
+  analyzed.forEach((candidate) => {
+    bucketCounts[candidate.screeningBucket]++;
+  });
+
   return {
     requirements,
-    candidates:analyzed,
-    summary:{
+    candidates: analyzed,
+    summary: {
+      totalApplicants: analyzed.length,
       totalCandidates: analyzed.length,
-      avgScore: analyzed.length?Math.round(analyzed.reduce((s,c)=>s+c.score,0)/analyzed.length):0,
-      decisionCounts,
-      topScreens: analyzed.filter(c=>c.suggestedDecision==="Strong Screen"||c.suggestedDecision==="Screen").slice(0,3)
+      autoRejected: bucketCounts.Reject,
+      needsReview: bucketCounts.Review,
+      strongScreen: bucketCounts["Strong screen"],
+      bucketCounts,
+      decisionCounts: bucketCounts,
+      topRejectReasons: topCounts(analyzed.flatMap((candidate) => candidate.hardDisqualifiers)),
+      commonMissingMustHaves: topCounts(analyzed.flatMap((candidate) => candidate.missingMustHaves)),
+      shortlist: analyzed.filter((candidate) => candidate.screeningBucket === "Strong screen"),
+      topScreens: analyzed.filter((candidate) => candidate.screeningBucket === "Strong screen").slice(0, 5)
     }
   };
 }
